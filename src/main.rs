@@ -5,6 +5,7 @@ use error::AuthError;
 
 mod browser;
 mod client;
+mod desktop;
 mod env;
 mod error;
 
@@ -57,6 +58,23 @@ enum AppCommand {
     Logout {
         #[arg(short, long)]
         session_name: Option<String>,
+    },
+
+    /// Create a desktop entry for launching a game client
+    CreateDesktopEntry {
+        #[arg(short, long)]
+        session_name: Option<String>,
+        /// Name for the desktop entry
+        #[arg(short, long, help = "Display name for the desktop entry")]
+        name: String,
+        /// Character ID to use for authentication
+        #[arg(short, long, help = "Character ID from 'ls' command")]
+        character_id: String,
+        /// Name or path of the executable to run
+        exec: String,
+        /// Arguments to pass to the program
+        #[arg(help = "Additional arguments for the program")]
+        args: Vec<String>,
     },
 }
 
@@ -125,7 +143,22 @@ async fn main() -> miette::Result<()> {
             let client = Client::new(session_name);
             client.logout()
         }
+        AppCommand::CreateDesktopEntry {
+            session_name,
+            name,
+            character_id,
+            exec,
+            args,
+        } => {
+            let desktop_entry = desktop::create_entry(session_name, name, character_id, exec, args)?;
+            println!(
+                "Desktop entry created: {}",
+                style(desktop_entry.display()).green().bold()
+            );
+            Ok(())
+        }
     }.map_err(|error| {
         error.into()
     })
 }
+
