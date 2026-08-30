@@ -9,6 +9,8 @@ A linux native alternative to the Jagex Launcher, possibly also works on MacOS/W
 
 ## Quick Start
 
+By default the application stores your credentials in a permissions-locked file under your user data directory (`$HOME/.local/share/auth-rs/sessions/` on Linux). Set `AUTH_RS_USE_KEYRING=1` to use your OS's native credential store instead (Keychain on macOS, Credential Manager on Windows, the kernel keyring on Linux) - on Linux specifically, this only persists until your next reboot.
+
 ### 1. Authenticate with Jagex
 ```bash
 auth-rs authorize

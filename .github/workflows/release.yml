@@ -62,11 +62,6 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-x86_64
-      - name: Install system deps
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: libgtk-3-dev libjavascriptcoregtk-4.1-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev
-          version: 1.0
       - name: Build
         env:
           CI_VERSION: ${{ needs.check_version.outputs.release_version }}
