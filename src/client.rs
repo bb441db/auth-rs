@@ -1,25 +1,13 @@
+use std::path::PathBuf;
 
-
-use std::{path::PathBuf, time::SystemTime};
-
-use keyring::Entry;
-use serde::{Deserialize, Serialize};
 use crate::error::{AuthError, Result};
+use keyring_core::Entry;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 struct SessionRequest {
     #[serde(rename = "idToken")]
-    id_token: String
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct Tokens {
-    pub access_token: String,
-    pub expires_in: usize,
-    pub id_token: String,
-    pub refresh_token: String,
-    pub scope: String,
-    pub token_type: String,
+    id_token: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -38,51 +26,97 @@ pub struct Session {
     pub session_id: String,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct AuthState {
-    pub time: SystemTime,
-    pub tokens: Tokens
-}
-
 struct SessionStore;
 
 impl SessionStore {
     const SERVICE: &'static str = "auth-rs";
-    
-    fn get_entry(session_name: &Option<String>) -> Result<Entry> {
-        let key = match session_name {
+
+    fn use_file_storage() -> bool {
+        !std::env::var("AUTH_RS_USE_KEYRING")
+            .is_ok_and(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+    }
+
+    fn key(session_name: &Option<String>) -> String {
+        match session_name {
             Some(session_name) => format!("named-session-{session_name}"),
             None => "session".to_owned(),
-        };
-        Entry::new(Self::SERVICE, &key)
-            .map_err(AuthError::from)
-    }
-    
-    fn store(session_name: &Option<String>, session: &Session) -> Result<()> {
-        let entry = Self::get_entry(session_name)?;
-        let session_json = serde_json::to_string(session)?;
-        entry.set_password(&session_json)
-            .map_err(AuthError::from)
-    }
-    
-    fn load(session_name: &Option<String>) -> Result<Option<Session>> {
-        let entry = Self::get_entry(session_name)?;
-        match entry.get_password() {
-            Ok(session_json) => {
-                let session: Session = serde_json::from_str(&session_json)?;
-                Ok(Some(session))
-            }
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(AuthError::from(e))
         }
     }
-    
+
+    fn get_entry(session_name: &Option<String>) -> Result<Entry> {
+        crate::keystore::ensure_initialized()?;
+        Entry::new(Self::SERVICE, &Self::key(session_name)).map_err(AuthError::from)
+    }
+
+    fn file_path(session_name: &Option<String>) -> Result<PathBuf> {
+        let mut path = dirs::data_local_dir().ok_or(AuthError::NoCacheDir)?;
+        path.push("auth-rs");
+        path.push("sessions");
+        std::fs::create_dir_all(&path)?;
+        path.push(format!("{}.json", Self::key(session_name)));
+        Ok(path)
+    }
+
+    fn write_file_restricted(path: &std::path::Path, contents: &str) -> Result<()> {
+        std::fs::write(path, contents)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+
+        Ok(())
+    }
+
+    fn store(session_name: &Option<String>, session: &Session) -> Result<()> {
+        let session_json = serde_json::to_string(session)?;
+
+        if Self::use_file_storage() {
+            let path = Self::file_path(session_name)?;
+            Self::write_file_restricted(&path, &session_json)
+        } else {
+            let entry = Self::get_entry(session_name)?;
+            entry.set_password(&session_json).map_err(AuthError::from)
+        }
+    }
+
+    fn load(session_name: &Option<String>) -> Result<Option<Session>> {
+        if Self::use_file_storage() {
+            let path = Self::file_path(session_name)?;
+            match std::fs::read_to_string(&path) {
+                Ok(session_json) => Ok(Some(serde_json::from_str(&session_json)?)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(AuthError::from(e)),
+            }
+        } else {
+            let entry = Self::get_entry(session_name)?;
+            match entry.get_password() {
+                Ok(session_json) => {
+                    let session: Session = serde_json::from_str(&session_json)?;
+                    Ok(Some(session))
+                }
+                Err(keyring_core::Error::NoEntry) => Ok(None),
+                Err(e) => Err(AuthError::from(e)),
+            }
+        }
+    }
+
     fn clear(session_name: &Option<String>) -> Result<()> {
-        let entry = Self::get_entry(session_name)?;
-        match entry.delete_credential() {
-            Ok(()) => Ok(()),
-            Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(AuthError::from(e))
+        if Self::use_file_storage() {
+            let path = Self::file_path(session_name)?;
+            match std::fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(AuthError::from(e)),
+            }
+        } else {
+            let entry = Self::get_entry(session_name)?;
+            match entry.delete_credential() {
+                Ok(()) => Ok(()),
+                Err(keyring_core::Error::NoEntry) => Ok(()),
+                Err(e) => Err(AuthError::from(e)),
+            }
         }
     }
 }
@@ -92,7 +126,6 @@ pub struct Client {
     client: reqwest::Client,
 }
 
-
 impl Client {
     pub fn new(session_name: Option<String>) -> Self {
         Self {
@@ -101,45 +134,46 @@ impl Client {
         }
     }
 
-    pub async fn token(&self, code: &str, verifier: &str) -> Result<AuthState> {
-        let url = "https://account.jagex.com/oauth2/token";
-        let time = SystemTime::now();
-        let response = self.client
-            .post(url)
-            .form(&[
-                ("grant_type", "authorization_code"),
-                ("client_id", crate::env::CLIENT_ID),
-                ("code", code),
-                ("code_verifier", verifier),
-                ("redirect_uri", crate::env::REDIRECT),
-            ])
-            .send()
-            .await?;
-
-        let tokens: Tokens = response.json().await?;
-        let state = AuthState { time, tokens };
-        Ok(state)
-    }
-
     pub async fn create_session(&self, token: &str) -> Result<Session> {
         let url = "https://auth.jagex.com/game-session/v1/sessions";
-        let body = SessionRequest { id_token: token.to_owned() };
-        let response = self.client.post(url)
+        let body = SessionRequest {
+            id_token: token.to_owned(),
+        };
+        let response = self
+            .client
+            .post(url)
             .body(serde_json::to_string(&body)?)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .send()
             .await?;
-        let session: Session = response.json().await?;
+        let session: Session = Self::parse_json_response(response).await?;
         SessionStore::store(&self.session_name, &session)?;
         self.clear_accounts_cache()?;
         Ok(session)
     }
 
+    async fn parse_json_response<T: serde::de::DeserializeOwned>(
+        response: reqwest::Response,
+    ) -> Result<T> {
+        let status = response.status();
+        let body = response.text().await?;
+
+        if !status.is_success() {
+            return Err(AuthError::InvalidResponse(format!(
+                "Server returned {status}: {body}"
+            )));
+        }
+
+        serde_json::from_str(&body).map_err(|e| {
+            AuthError::InvalidResponse(format!("Unexpected response shape ({e}): {body}"))
+        })
+    }
+
     pub fn session(&self) -> Result<Session> {
         SessionStore::load(&self.session_name)?.ok_or(AuthError::SessionNotFound)
     }
-    
+
     fn clear_accounts_cache(&self) -> Result<()> {
         let path = match self.accounts_cache_dir() {
             Ok(path) => path,
@@ -201,13 +235,15 @@ impl Client {
         }
 
         let url = "https://auth.jagex.com/game-session/v1/accounts";
-        let response = self.client.get(url)
+        let response = self
+            .client
+            .get(url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .header("Authorization", format!("Bearer {}", session.session_id))
             .send()
             .await?;
-        let accounts: Vec<Account> = response.json().await?;
+        let accounts: Vec<Account> = Self::parse_json_response(response).await?;
 
         if store_offline {
             self.store_accounts(&accounts)?;

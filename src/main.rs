@@ -3,10 +3,13 @@ use client::Client;
 use console::style;
 use error::AuthError;
 
-mod browser;
+mod auth;
 mod client;
 mod env;
 mod error;
+mod ipc;
+mod keystore;
+mod scheme;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -58,6 +61,12 @@ enum AppCommand {
         #[arg(short, long)]
         session_name: Option<String>,
     },
+
+    #[command(hide = true, name = "handle-callback")]
+    HandleCallback { url: String },
+
+    #[command(hide = true, name = "dump-callback")]
+    DumpCallback { url: String },
 }
 
 #[tokio::main]
@@ -67,11 +76,11 @@ async fn main() -> miette::Result<()> {
     let cli = CommandLineArgs::parse();
 
     match cli.command {
-        AppCommand::Authorize { session_name } => browser::authorize(session_name),
-        AppCommand::ListCharacters { 
-            session_name, 
+        AppCommand::Authorize { session_name } => auth::authorize(session_name).await,
+        AppCommand::ListCharacters {
+            session_name,
             offline,
-            write_cache 
+            write_cache,
         } => {
             let client = Client::new(session_name);
             let accounts = client.accounts(offline, write_cache).await?;
@@ -125,7 +134,18 @@ async fn main() -> miette::Result<()> {
             let client = Client::new(session_name);
             client.logout()
         }
-    }.map_err(|error| {
-        error.into()
-    })
+        AppCommand::HandleCallback { url } => ipc::forward_callback(&url),
+        AppCommand::DumpCallback { url } => {
+            use std::io::Write;
+            (|| -> std::io::Result<()> {
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/auth-rs-callback-dump.log")?;
+                writeln!(file, "{url}")
+            })()
+            .map_err(AuthError::from)
+        }
+    }
+    .map_err(|error| error.into())
 }
