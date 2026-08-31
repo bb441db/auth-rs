@@ -9,14 +9,13 @@ console = "0.16.0"
 exec = "0.3.1"
 keyring-core = "1.0.0"
 log = "0.4"
-env_logger = "0.11.8"
-miette = { version = "7.0", features = ["fancy"] }
+env_logger = { version = "0.11.8", default-features = false, features = ["auto-color", "humantime"] }
 opener = "0.8.5"
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.142"
 thiserror = "2.0.12"
-tokio = { version = "1.47.1", features = ["macros", "rt", "rt-multi-thread"] }
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "platform-verifier", "json"] }
 url = "2.5.4"
 uuid = { version = "1.17.0", features = ["v4"] }
 dirs = "6.0.0"
@@ -35,3 +34,4 @@ lto = true
 codegen-units = 1
 panic = 'abort'
 strip = true
+opt-level = "z"

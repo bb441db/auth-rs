@@ -10,7 +10,7 @@ use crate::{
     ipc, scheme,
 };
 
-const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
+const CALLBACK_TIMEOUT: Duration = Duration::from_mins(5);
 
 #[derive(Debug, Clone)]
 struct AuthOptions {
@@ -61,7 +61,7 @@ fn open_in_browser(url: &str) -> Result<()> {
         .map_err(|e| AuthError::BrowserError(format!("Failed to open browser: {e}")))
 }
 
-pub async fn authorize(session_name: Option<String>) -> Result<()> {
+pub fn authorize(session_name: Option<String>) -> Result<()> {
     scheme::ensure_registered()?;
 
     let client = Client::new(session_name);
@@ -80,7 +80,7 @@ pub async fn authorize(session_name: Option<String>) -> Result<()> {
         ));
     }
 
-    client.create_session(&id_token).await?;
+    client.create_session(&id_token)?;
 
     Ok(())
 }
