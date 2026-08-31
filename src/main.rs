@@ -1,7 +1,9 @@
+use std::process::ExitCode;
+
 use clap::{Parser, Subcommand};
 use client::Client;
 use console::style;
-use error::AuthError;
+use error::{AuthError, Result};
 
 mod auth;
 mod client;
@@ -39,7 +41,7 @@ enum AppCommand {
         write_cache: bool,
     },
 
-    /// Execute a program with Jagex session credentials (e.g., RuneLite, OSRS client)
+    /// Execute a program with Jagex session credentials (e.g., `RuneLite`, OSRS client)
     Exec {
         #[arg(short, long)]
         session_name: Option<String>,
@@ -69,27 +71,41 @@ enum AppCommand {
     DumpCallback { url: String },
 }
 
-#[tokio::main]
-async fn main() -> miette::Result<()> {
-    miette::set_panic_hook();
+fn main() -> ExitCode {
     env_logger::init();
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("a default crypto provider was already installed");
+
+    if let Err(error) = run() {
+        eprintln!("{} {error}", style("Error:").red().bold());
+        if let Some(help) = error.help() {
+            eprintln!("{} {help}", style("help:").cyan().bold());
+        }
+        return ExitCode::FAILURE;
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn run() -> Result<()> {
     let cli = CommandLineArgs::parse();
 
     match cli.command {
-        AppCommand::Authorize { session_name } => auth::authorize(session_name).await,
+        AppCommand::Authorize { session_name } => auth::authorize(session_name),
         AppCommand::ListCharacters {
             session_name,
             offline,
             write_cache,
         } => {
             let client = Client::new(session_name);
-            let accounts = client.accounts(offline, write_cache).await?;
+            let accounts = client.accounts(offline, write_cache)?;
             for account in accounts {
                 println!(
                     "  {} {} (ID: {})",
                     style("•").cyan(),
                     style(&account.display_name).green().bold(),
-                    style(account.account_id.to_string()).bold()
+                    style(account.account_id.clone()).bold()
                 );
             }
             Ok(())
@@ -103,7 +119,7 @@ async fn main() -> miette::Result<()> {
         } => {
             let client = Client::new(session_name);
             let session = client.session()?;
-            let accounts = client.accounts(offline, false).await?;
+            let accounts = client.accounts(offline, false)?;
 
             if let Some(account) = accounts.iter().find(|a| a.account_id == character_id) {
                 std::env::set_var("JX_SESSION_ID", session.session_id);
@@ -147,5 +163,4 @@ async fn main() -> miette::Result<()> {
             .map_err(AuthError::from)
         }
     }
-    .map_err(|error| error.into())
 }

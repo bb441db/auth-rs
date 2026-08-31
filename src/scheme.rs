@@ -24,9 +24,8 @@ pub fn ensure_registered() -> Result<()> {
         mime_type,
     );
 
-    let up_to_date = std::fs::read_to_string(&desktop_path)
-        .map(|existing| existing == contents)
-        .unwrap_or(false);
+    let up_to_date =
+        std::fs::read_to_string(&desktop_path).is_ok_and(|existing| existing == contents);
 
     if !up_to_date {
         std::fs::write(&desktop_path, contents)?;
