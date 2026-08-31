@@ -40,11 +40,11 @@ jobs:
           echo "${change_log}" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
       - name: Package source for build job
-        run: tar --exclude=.git -czf source.tar.gz .
+        run: tar --exclude=.git -czf /tmp/source.tar.gz .
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: source
-          path: source.tar.gz
+          path: /tmp/source.tar.gz
           retention-days: 1
 
   build:
